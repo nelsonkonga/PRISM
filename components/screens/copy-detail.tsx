@@ -70,7 +70,8 @@ function Editor({
   const previous = index > 0 ? session.copies[index - 1] : null;
   const next = index < session.copies.length - 1 ? session.copies[index + 1] : null;
   const max = criteria.length ? criteria.reduce((sum, item) => sum + item.max, 0) : copy.max;
-  const score = criteria.length ? Math.round(criteria.reduce((sum, item) => sum + item.awarded, 0) * 2) / 2 : Number(manualScore);
+  const typed = manualScore === "" ? null : Number(manualScore);
+  const score = criteria.length ? Math.round(criteria.reduce((sum, item) => sum + item.awarded, 0) * 2) / 2 : typed;
   const image = copy.mime.startsWith("image/");
 
   function save() {
@@ -147,8 +148,8 @@ function Editor({
             <p className="text-sm text-muted-foreground">Élève, repris du nom de fichier</p>
             <Input className="mt-1 h-11" value={student} onChange={(event) => setStudent(event.target.value)} />
           </div>
-          <p className="text-4xl font-semibold">{Number.isFinite(score) ? score : "—"}<span className="text-xl font-normal text-muted-foreground"> / {max || copy.max}</span></p>
-          <p className="text-sm text-muted-foreground">{copy.detail}</p>
+          <p className="text-4xl font-semibold">{score !== null && Number.isFinite(score) ? score : "—"}<span className="text-xl font-normal text-muted-foreground"> / {max || copy.max}</span></p>
+          {copy.detail && copy.detail !== copy.error ? <p className="text-sm text-muted-foreground">{copy.detail}</p> : null}
           {copy.error ? <p className="text-sm text-destructive">{copy.error}</p> : null}
           {criteria.length === 0 ? (
             <label className="block text-sm">

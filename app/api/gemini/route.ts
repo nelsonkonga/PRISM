@@ -10,6 +10,41 @@ async function caller(request: Request) {
   return data.user;
 }
 
+function retryable(status: number, message: string) {
+  return status === 429 || status === 503 || status === 404 || /high demand|try again|no longer available|not found|unavailable|overloaded|resource exhausted/i.test(message);
+}
+
+async function askGemini(apiKey: string, model: string, temperature: number, prompt: string) {
+  const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify({
+      model,
+      input: prompt,
+      generation_config: { temperature },
+      response_format: { type: "text", mime_type: "application/json" },
+    }),
+  });
+  const data = (await response.json()) as {
+    error?: { message?: string };
+    output_text?: string;
+    steps?: { type?: string; content?: { type?: string; text?: string }[] }[];
+  };
+  if (!response.ok) {
+    const error = data.error?.message || "Échec Gemini.";
+    return { text: "", error, status: response.status, retryable: retryable(response.status, error) };
+  }
+  const fromSteps = (data.steps ?? [])
+    .filter((step) => step.type === "model_output")
+    .flatMap((step) => step.content ?? [])
+    .filter((part) => part.type === "text")
+    .map((part) => part.text ?? "")
+    .join("");
+  const text = (data.output_text || fromSteps).replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  if (!text) return { text: "", error: "Réponse Gemini vide.", status: 502, retryable: true };
+  return { text, error: "", status: 200, retryable: false };
+}
+
 function serverKey() {
   const apiKey = process.env.GEMINI_API_KEY?.trim() ?? "";
   return apiKey.length >= 10 ? apiKey : "";
@@ -49,40 +84,24 @@ export async function POST(request: Request) {
   }
   if (body.action === "generate") {
     const requested = body.model?.trim().replace(/^models\//, "") || "gemini-3.8-flash";
-    const model = requested === "gemini-2.5-flash" ? "gemini-3.8-flash" : requested;
-    if (!/^[a-zA-Z0-9._-]{3,80}$/.test(model)) {
+    const preferred = requested === "gemini-2.5-flash" ? "gemini-3.8-flash" : requested;
+    if (!/^[a-zA-Z0-9._-]{3,80}$/.test(preferred)) {
       return Response.json({ error: "Nom de modèle invalide." }, { status: 400 });
     }
     const temperature = Math.min(1, Math.max(0, Number(body.temperature) || 0.1));
     const prompt = String(body.prompt ?? "").slice(0, 120_000);
     if (!prompt) return Response.json({ error: "Demande vide." }, { status: 400 });
-    const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify({
-        model,
-        input: prompt,
-        generation_config: { temperature },
-        response_format: { type: "text", mime_type: "application/json" },
-      }),
-    });
-    const data = (await response.json()) as {
-      error?: { message?: string };
-      output_text?: string;
-      steps?: { type?: string; content?: { type?: string; text?: string }[] }[];
-    };
-    if (!response.ok) {
-      return Response.json({ error: data.error?.message || "Échec Gemini." }, { status: response.status });
+    const models = [...new Set([preferred, "gemini-3.5-flash", "gemini-2.5-flash-lite"])];
+    let failure = "Échec Gemini.";
+    let status = 502;
+    for (const model of models) {
+      const attempt = await askGemini(apiKey, model, temperature, prompt);
+      if (attempt.text) return Response.json({ text: attempt.text, model });
+      failure = attempt.error;
+      status = attempt.status;
+      if (!attempt.retryable) break;
     }
-    const fromSteps = (data.steps ?? [])
-      .filter((step) => step.type === "model_output")
-      .flatMap((step) => step.content ?? [])
-      .filter((part) => part.type === "text")
-      .map((part) => part.text ?? "")
-      .join("");
-    const text = (data.output_text || fromSteps).replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-    if (!text) return Response.json({ error: "Réponse Gemini vide." }, { status: 502 });
-    return Response.json({ text });
+    return Response.json({ error: failure }, { status });
   }
   return Response.json({ error: "Action inconnue." }, { status: 400 });
 }

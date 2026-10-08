@@ -15,7 +15,7 @@ async function post(body: Record<string, unknown>) {
     headers: await authHeaders(),
     body: JSON.stringify(body),
   });
-  const data = (await response.json()) as { error?: string; text?: string; models?: string[] };
+  const data = (await response.json()) as { error?: string; text?: string; models?: string[]; model?: string };
   if (!response.ok) {
     throw new Error(data.error || "L’appel Gemini a échoué.");
   }
@@ -63,7 +63,7 @@ export async function gradeWithGemini(input: {
     temperature: Number(input.temperature) || 0.1,
     prompt,
   });
-  return parseGeminiGrade(data.text || "", input.questions);
+  return { ...parseGeminiGrade(data.text || "", input.questions), model: data.model || input.model };
 }
 
 export function parseGeminiGrade(raw: string, questions: Question[]) {

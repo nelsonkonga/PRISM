@@ -46,7 +46,7 @@ export async function gradeOne(copy: Copy, session: Session, settings: Settings)
       });
     }
     const seconds = Math.round((performance.now() - started) / 100) / 10;
-    const engine = useGemini ? `Gemini ${settings.model}` : "Comparaison locale";
+    const engine = useGemini && "model" in result ? `Gemini ${result.model}` : "Comparaison locale";
     return stamp(copy, {
       status: "corrigee",
       score: result.score,
@@ -61,12 +61,33 @@ export async function gradeOne(copy: Copy, session: Session, settings: Settings)
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Échec de l’analyse.";
+    const local = gradeLocal({
+      questions: session.questions,
+      studentText: sourceText,
+      rigor: session.rigor,
+      strict: session.mode === "strict",
+    });
+    if (!("error" in local)) {
+      const seconds = Math.round((performance.now() - started) / 100) / 10;
+      return stamp(copy, {
+        status: "corrigee",
+        score: local.score,
+        max: local.max,
+        criteria: local.criteria,
+        appreciation: local.appreciation,
+        advice: local.advice,
+        source: "local",
+        error: "",
+        analysisSeconds: seconds,
+        detail: `Gemini est saturé. Note calculée par comparaison locale · rigueur ${session.rigor}/10 · ${seconds.toLocaleString("fr-FR")} s`,
+      });
+    }
     return stamp(copy, {
       status: "erreur",
       score: null,
       source: null,
       error: message,
-      detail: message,
+      detail: "Gemini est saturé. Relancez l’analyse dans un moment.",
     });
   }
 }
