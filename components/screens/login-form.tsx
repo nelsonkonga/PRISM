@@ -10,26 +10,26 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useStore } from "@/lib/store";
 
-type Mode = "login" | "signup" | "reset";
+type Mode = "login" | "signup" | "reset" | "choose";
 
 export function LoginForm() {
-  const { ready, user, login, register, resetPassword } = useStore();
+  const { ready, user, recovery, login, register, resetPassword, updatePassword } = useStore();
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("login");
   const [name, setName] = useState("");
   const [establishment, setEstablishment] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [recovery, setRecovery] = useState("");
   const [show, setShow] = useState(false);
   const [remember, setRemember] = useState(true);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [pending, setPending] = useState(false);
+  const shown: Mode = recovery ? "choose" : mode;
 
   useEffect(() => {
-    if (ready && user) router.replace("/tableau-de-bord");
-  }, [ready, user, router]);
+    if (ready && user && !recovery) router.replace("/tableau-de-bord");
+  }, [ready, user, router, recovery]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -37,20 +37,24 @@ export function LoginForm() {
     setInfo("");
     setPending(true);
     const result =
-      mode === "signup"
-        ? await register({ name, establishment, email, password, recovery, remember })
-        : mode === "reset"
-          ? await resetPassword(email, recovery, password)
-          : await login(email, password, remember);
+      shown === "signup"
+        ? await register({ name, establishment, email, password, remember })
+        : shown === "reset"
+          ? await resetPassword(email)
+          : shown === "choose"
+            ? await updatePassword(password)
+            : await login(email, password, remember);
     setPending(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    if (mode === "reset") {
-      setMode("login");
-      setPassword("");
-      setInfo("Mot de passe mis à jour. Vous pouvez vous connecter.");
+    if (result.info) {
+      setInfo(result.info);
+      if (shown === "reset" || shown === "choose") {
+        setMode("login");
+        setPassword("");
+      }
       return;
     }
     router.push("/tableau-de-bord");
@@ -75,12 +79,13 @@ export function LoginForm() {
                 ["login", "Connexion"],
                 ["signup", "Créer un compte"],
                 ["reset", "Mot de passe oublié"],
+                ...(shown === "choose" ? [["choose", "Nouveau mot de passe"] as const] : []),
               ] as const
             ).map(([id, label]) => (
               <button
                 key={id}
                 type="button"
-                className={mode === id ? "font-semibold text-[#1e50a0]" : "text-muted-foreground"}
+                className={shown === id ? "font-semibold text-[#1e50a0]" : "text-muted-foreground"}
                 onClick={() => {
                   setMode(id);
                   setError("");
@@ -91,22 +96,25 @@ export function LoginForm() {
               </button>
             ))}
           </div>
-          {mode === "signup" ? (
+          {shown === "signup" ? (
             <div className="space-y-3">
               <Field label="Nom" value={name} onChange={setName} autoComplete="name" />
               <Field label="Établissement" value={establishment} onChange={setEstablishment} autoComplete="organization" />
             </div>
           ) : null}
-          <div className={mode === "signup" ? "mt-3" : ""}>
-            <Field label="Adresse email" value={email} onChange={setEmail} type="email" autoComplete="username" />
-          </div>
+          {shown !== "choose" ? (
+            <div className={shown === "signup" ? "mt-3" : ""}>
+              <Field label="Adresse email" value={email} onChange={setEmail} type="email" autoComplete="username" />
+            </div>
+          ) : null}
+          {shown !== "reset" ? (
           <div className="mt-3 space-y-1.5">
-            <Label htmlFor="password">{mode === "reset" ? "Nouveau mot de passe" : "Mot de passe"}</Label>
+            <Label htmlFor="password">{shown === "choose" ? "Nouveau mot de passe" : "Mot de passe"}</Label>
             <div className="relative">
               <Input
                 id="password"
                 type={show ? "text" : "password"}
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                autoComplete={shown === "login" ? "current-password" : "new-password"}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="h-11 pr-12"
@@ -121,35 +129,24 @@ export function LoginForm() {
               </button>
             </div>
           </div>
-          {mode !== "login" ? (
-            <div className="mt-3">
-              <Field
-                label="Code de récupération"
-                value={recovery}
-                onChange={setRecovery}
-                autoComplete="off"
-              />
-              <p className="mt-1 text-xs text-muted-foreground">
-                {mode === "signup"
-                  ? "Choisissez-le maintenant : il sert à changer le mot de passe, il n’est pas envoyé par email."
-                  : "Le code choisi à la création du compte."}
-              </p>
-            </div>
           ) : (
+            <p className="mt-3 text-sm text-muted-foreground">Un lien est envoyé à cette adresse s’il existe un compte.</p>
+          )}
+          {shown === "login" ? (
             <label className="mt-4 flex items-center gap-2 text-sm">
               <Checkbox checked={remember} onCheckedChange={(checked) => setRemember(checked)} />
               Se souvenir sur cet appareil
             </label>
-          )}
+          ) : null}
           {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
           {info ? <p className="mt-3 text-sm text-emerald-700">{info}</p> : null}
           <Button type="submit" className="mt-6 h-12 w-full text-base" disabled={pending}>
-            {pending ? "Vérification…" : mode === "signup" ? "Créer le compte" : mode === "reset" ? "Mettre à jour" : "Se connecter"}
+            {pending ? "Vérification…" : shown === "signup" ? "Créer le compte" : shown === "reset" ? "Envoyer le lien" : shown === "choose" ? "Enregistrer" : "Se connecter"}
             <ArrowRight />
           </Button>
         </form>
         <p className="mt-6 text-center text-xs text-muted-foreground">
-          Le compte et les copies restent dans ce navigateur.
+          Le compte, les sessions et les fichiers sont enregistrés dans Supabase.
         </p>
       </div>
     </div>

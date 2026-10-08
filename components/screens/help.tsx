@@ -9,7 +9,7 @@ export function HelpScreen() {
         <li>
           <h2 className="font-semibold">1. Compte</h2>
           <p className="text-sm leading-6 text-muted-foreground">
-            Le compte est créé dans ce navigateur. Le mot de passe fait au moins 8 caractères. Le code de récupération, choisi par vous, permet d’en définir un nouveau. « Se souvenir » garde la session après la fermeture de l’onglet.
+            Le compte est créé dans Supabase. Le mot de passe fait au moins 8 caractères. « Mot de passe oublié » envoie un lien à votre adresse. « Se souvenir » garde la session après la fermeture de l’onglet.
           </p>
         </li>
         <li>
@@ -21,7 +21,7 @@ export function HelpScreen() {
         <li>
           <h2 className="font-semibold">3. Deux moteurs</h2>
           <p className="text-sm leading-6 text-muted-foreground">
-            La comparaison locale mesure la part du corrigé retrouvée dans la copie, puis applique la rigueur. Gemini n’est contacté que si ce mode est coupé et qu’une clé a été enregistrée. Un échec laisse la copie en erreur, sans note de remplacement.
+            Gemini est le moteur par défaut : la clé Google est lue sur le serveur, pas dans le navigateur. La comparaison locale reste disponible dans Paramètres. Un échec laisse la copie en erreur, sans note de remplacement.
           </p>
         </li>
         <li>

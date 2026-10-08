@@ -87,7 +87,7 @@ function Navigation({
 }
 
 function Shell({ children }: { children: ReactNode }) {
-  const { ready, user, logout } = useStore();
+  const { ready, user, logout, syncError } = useStore();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const authed = Boolean(ready && user);
@@ -180,6 +180,7 @@ function Shell({ children }: { children: ReactNode }) {
         hidden={!authed}
         className="mx-auto w-full min-w-0 max-w-[1280px] flex-1 px-4 py-6 sm:px-8 sm:py-8"
       >
+        {syncError ? <p className="mb-4 rounded-lg bg-white px-4 py-3 text-sm text-destructive ring-1 ring-[#d5e0ee]">{syncError}</p> : null}
         {children}
       </main>
       {authed ? (

@@ -16,10 +16,9 @@ export const copyStatusLabel: Record<CopyStatus, string> = {
 export const defaultSettings = {
   provider: "Google AI Gemini",
   connection: "a_verifier" as const,
-  apiKey: "",
   lastCheck: "",
   model: "gemini-2.5-flash",
   temperature: "0.1",
-  localMode: true,
+  localMode: false,
   anonymize: true,
 };

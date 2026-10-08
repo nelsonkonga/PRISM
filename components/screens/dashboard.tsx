@@ -198,7 +198,7 @@ export function Dashboard() {
             Où vont les copies
           </div>
           <p className="mt-3 text-sm leading-6">
-            Les fichiers et les notes restent dans ce navigateur. Avec Gemini activé, le texte de la copie et le barème sont envoyés à Google le temps de l’analyse.
+            Les fichiers et les notes sont enregistrés dans Supabase, liés à votre compte. Avec Gemini, le texte de la copie et le barème sont envoyés à Google le temps de l’analyse. La clé reste sur le serveur.
           </p>
           <Button variant="outline" className="mt-4" onClick={() => router.push("/parametres")}>
             Revoir le moteur

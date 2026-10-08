@@ -1,10 +1,18 @@
 import type { Question } from "@/lib/types";
 import { questionPoints, syncQuestion } from "@/lib/rubric";
+import { supabase } from "@/lib/supabase";
+
+async function authHeaders() {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Session absente.");
+  return { authorization: `Bearer ${token}`, "content-type": "application/json" };
+}
 
 async function post(body: Record<string, unknown>) {
   const response = await fetch("/api/gemini", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: await authHeaders(),
     body: JSON.stringify(body),
   });
   const data = (await response.json()) as { error?: string; text?: string; models?: string[] };
@@ -14,13 +22,19 @@ async function post(body: Record<string, unknown>) {
   return data;
 }
 
-export async function testGemini(apiKey: string) {
-  const data = await post({ action: "test", apiKey });
+export async function geminiConfigured() {
+  const response = await fetch("/api/gemini", { headers: await authHeaders() });
+  const data = (await response.json()) as { configured?: boolean; error?: string };
+  if (!response.ok) throw new Error(data.error || "Impossible de lire la configuration Gemini.");
+  return Boolean(data.configured);
+}
+
+export async function testGemini() {
+  const data = await post({ action: "test" });
   return data.models ?? [];
 }
 
 export async function gradeWithGemini(input: {
-  apiKey: string;
   model: string;
   temperature: string;
   questions: Question[];
@@ -45,7 +59,6 @@ export async function gradeWithGemini(input: {
   ].join("\n\n");
   const data = await post({
     action: "generate",
-    apiKey: input.apiKey,
     model: input.model,
     temperature: Number(input.temperature) || 0.1,
     prompt,
@@ -90,7 +103,6 @@ export function parseGeminiGrade(raw: string, questions: Question[]) {
 }
 
 export async function reviseWithGemini(input: {
-  apiKey: string;
   model: string;
   temperature: string;
   questions: Question[];
@@ -105,7 +117,6 @@ export async function reviseWithGemini(input: {
   ].join("\n\n");
   const data = await post({
     action: "generate",
-    apiKey: input.apiKey,
     model: input.model,
     temperature: Number(input.temperature) || 0.1,
     prompt,

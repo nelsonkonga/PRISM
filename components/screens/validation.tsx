@@ -25,11 +25,7 @@ export function Validation() {
 
   if (!session) return <p>Cette session n’est plus dans l’espace.</p>;
 
-  const engine = settings.localMode
-    ? "Comparaison locale au corrigé"
-    : settings.apiKey.trim()
-      ? `Gemini · ${settings.model}`
-      : "Aucun moteur : ajoutez une clé ou activez la comparaison locale";
+  const engine = settings.localMode ? "Comparaison locale au corrigé" : `Gemini · ${settings.model}`;
 
   function updateQuestions(questions: Question[]) {
     patchSession(session!.id, (current) => ({ ...current, questions }));
@@ -48,9 +44,8 @@ export function Validation() {
       const local = reviseRubric(session.questions, message);
       const revised =
         local ??
-        (!settings.localMode && settings.apiKey.trim()
+        (!settings.localMode
           ? await reviseWithGemini({
-              apiKey: settings.apiKey.trim(),
               model: settings.model,
               temperature: settings.temperature,
               questions: session.questions,
@@ -85,10 +80,6 @@ export function Validation() {
     }
     if (session.questions.some((question) => !question.expected.trim() || questionPoints(question) <= 0)) {
       setError("Chaque question doit avoir un texte attendu et au moins un point.");
-      return;
-    }
-    if (!settings.localMode && !settings.apiKey.trim()) {
-      setError("Activez la comparaison locale dans Paramètres, ou enregistrez une clé Gemini.");
       return;
     }
     patchSession(session.id, (current) => ({ ...current, validated: true, autoGrade: true }));

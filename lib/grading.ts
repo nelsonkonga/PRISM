@@ -20,19 +20,9 @@ export async function gradeOne(copy: Copy, session: Session, settings: Settings)
     });
   }
   try {
-    const useGemini = !settings.localMode && settings.apiKey.trim().length > 0;
-    if (!settings.localMode && !settings.apiKey.trim()) {
-      return stamp(copy, {
-        status: "erreur",
-        score: null,
-        source: null,
-        error: "Aucune clé API. Activez la comparaison locale dans Paramètres, ou saisissez la note.",
-        detail: "Moteur absent",
-      });
-    }
+    const useGemini = !settings.localMode;
     const result = useGemini
       ? await gradeWithGemini({
-          apiKey: settings.apiKey.trim(),
           model: settings.model.trim() || "gemini-2.5-flash",
           temperature: settings.temperature,
           questions: session.questions,

@@ -1,32 +1,37 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { testGemini } from "@/lib/gemini";
+import { geminiConfigured, testGemini } from "@/lib/gemini";
 import { useStore } from "@/lib/store";
 
 const sections = ["Fournisseur", "Moteur", "Modèle", "Données"];
 
 export function SettingsScreen() {
-  const { settings, updateSettings, eraseAccount } = useStore();
+  const { settings, updateSettings, eraseAccount, ready, user } = useStore();
   const router = useRouter();
-  const [showKey, setShowKey] = useState(false);
   const [section, setSection] = useState(sections[0]);
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState("");
+  const [configured, setConfigured] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    if (!ready || !user) return;
+    void geminiConfigured().then(setConfigured).catch(() => setConfigured(false));
+  }, [ready, user]);
 
   async function testConnection() {
     setTesting(true);
     setMessage("");
     try {
-      const models = await testGemini(settings.apiKey.trim());
+      const models = await testGemini();
       const now = new Intl.DateTimeFormat("fr-FR", { dateStyle: "short", timeStyle: "short" }).format(new Date());
       updateSettings({ connection: "connecte", lastCheck: now });
+      setConfigured(true);
       setMessage(models.length ? `Connexion établie. Modèles vus : ${models.slice(0, 4).join(", ")}.` : "Connexion établie. Aucun modèle listé.");
     } catch (error) {
       updateSettings({ connection: "a_verifier", lastCheck: "" });
@@ -42,7 +47,7 @@ export function SettingsScreen() {
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">Paramètres</h1>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            La comparaison locale lit vos fichiers dans le navigateur. Gemini n’est appelé que si vous coupez ce mode et qu’une clé a été testée.
+            Gemini est le moteur par défaut. La clé Google est lue sur le serveur. La comparaison locale reste disponible.
           </p>
         </div>
         <p className="rounded-full bg-white px-3 py-1 text-sm ring-1 ring-[#d5e0ee]">
@@ -62,25 +67,15 @@ export function SettingsScreen() {
           {section === "Fournisseur" ? (
             <section>
               <h2 className="text-lg font-semibold">{settings.provider}</h2>
-              <p className="mt-2 text-sm text-muted-foreground">La clé est envoyée uniquement à Google, lors d’un test ou d’une correction Gemini.</p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {configured === false
+                  ? "GEMINI_API_KEY est absente de ce déploiement."
+                  : "La clé est la variable GEMINI_API_KEY du serveur. Elle n’est pas enregistrée dans le navigateur."}
+              </p>
               <div className="mt-4">
-                <Label htmlFor="key">Clé API Gemini</Label>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                  <Input
-                    id="key"
-                    className="h-11 font-mono text-xs"
-                    type={showKey ? "text" : "password"}
-                    value={settings.apiKey}
-                    autoComplete="off"
-                    onChange={(event) => updateSettings({ apiKey: event.target.value, connection: "a_verifier", lastCheck: "" })}
-                  />
-                  <Button type="button" variant="outline" className="h-11" aria-label={showKey ? "Masquer la clé" : "Afficher la clé"} onClick={() => setShowKey((value) => !value)}>
-                    {showKey ? <EyeOff /> : <Eye />}
-                  </Button>
-                  <Button type="button" className="h-11" onClick={() => void testConnection()} disabled={testing || settings.apiKey.trim().length < 10}>
-                    {testing ? "Test…" : "Tester"}
-                  </Button>
-                </div>
+                <Button type="button" className="h-11" onClick={() => void testConnection()} disabled={testing}>
+                  {testing ? "Test…" : "Tester la clé serveur"}
+                </Button>
                 <p className="mt-2 text-xs text-muted-foreground">
                   {settings.lastCheck ? `Dernier test réussi le ${settings.lastCheck}.` : "Aucun test réussi pour cette clé."}
                 </p>
@@ -97,7 +92,7 @@ export function SettingsScreen() {
               <div className="mt-4">
                 <Toggle
                   title="Utiliser la comparaison locale"
-                  text="Coupé, la file appelle Gemini avec la clé et le modèle indiqués."
+                  text="Coupé, la file appelle Gemini avec la clé du serveur et le modèle indiqué."
                   checked={settings.localMode}
                   onChange={(localMode) => updateSettings({ localMode })}
                 />
@@ -121,7 +116,7 @@ export function SettingsScreen() {
           ) : null}
           {section === "Données" ? (
             <section>
-              <h2 className="text-lg font-semibold">Données de ce navigateur</h2>
+              <h2 className="text-lg font-semibold">Données du compte</h2>
               <div className="mt-4 space-y-3">
                 <Toggle
                   title="Anonymisation avant envoi"
@@ -132,7 +127,7 @@ export function SettingsScreen() {
                 <Button
                   variant="outline"
                   onClick={() => {
-                    if (window.confirm("Effacer le compte, les sessions et les fichiers de ce navigateur ?")) {
+                    if (window.confirm("Effacer le compte, les sessions et les fichiers dans Supabase ?")) {
                       void eraseAccount().then(() => router.replace("/"));
                     }
                   }}

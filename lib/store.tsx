@@ -3,30 +3,23 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
-import { hashSecret, normalizeEmail, verifySecret } from "@/lib/auth";
+import type { User as AuthUser } from "@supabase/supabase-js";
 import { deleteFile } from "@/lib/blobs";
 import { defaultSettings } from "@/lib/labels";
-import type { Account, Copy, Question, Session, Settings, UploadedCopy, User } from "@/lib/types";
-
-const DATA_KEY = "prism-v2";
-const ACTIVE_KEY = "prism-active";
-
-type Work = { sessions: Session[]; settings: Settings };
-
-type Database = {
-  accounts: Account[];
-  work: Record<string, Work>;
-  rememberedEmail: string | null;
-};
+import { setRemember, supabase, supabaseConfigured } from "@/lib/supabase";
+import type { Copy, Question, Session, Settings, UploadedCopy, User } from "@/lib/types";
 
 type Snapshot = {
   user: User | null;
   sessions: Session[];
   settings: Settings;
+  syncError: string;
+  recovery: boolean;
 };
 
 type NewSession = {
@@ -45,7 +38,7 @@ type NewSession = {
   copies: UploadedCopy[];
 };
 
-type Result = { ok: true } | { ok: false; error: string };
+type Result = { ok: true; info?: string } | { ok: false; error: string };
 
 type Store = Snapshot & {
   ready: boolean;
@@ -54,11 +47,11 @@ type Store = Snapshot & {
     establishment: string;
     email: string;
     password: string;
-    recovery: string;
     remember: boolean;
   }) => Promise<Result>;
   login: (email: string, password: string, remember: boolean) => Promise<Result>;
-  resetPassword: (email: string, recovery: string, password: string) => Promise<Result>;
+  resetPassword: (email: string) => Promise<Result>;
+  updatePassword: (password: string) => Promise<Result>;
   logout: () => void;
   updateSettings: (patch: Partial<Settings>) => void;
   createSession: (input: NewSession) => string;
@@ -69,15 +62,6 @@ type Store = Snapshot & {
 };
 
 const StoreContext = createContext<Store | null>(null);
-
-const emptyWork = (): Work => ({ sessions: [], settings: { ...defaultSettings } });
-
-const initialDb: Database = { accounts: [], work: {}, rememberedEmail: null };
-
-function activeEmail(db: Database) {
-  if (typeof window === "undefined") return null;
-  return db.rememberedEmail ?? window.sessionStorage.getItem(ACTIVE_KEY);
-}
 
 function decorate(session: Session): Session {
   const done = session.copies.filter((copy) => copy.score !== null);
@@ -103,64 +87,60 @@ function decorate(session: Session): Session {
   };
 }
 
-function project(db: Database): Snapshot {
-  const email = activeEmail(db);
-  const account = db.accounts.find((item) => item.email === email);
-  const work = email ? db.work[email] : undefined;
-  return {
-    user: account
-      ? { email: account.email, name: account.name, role: account.role, establishment: account.establishment }
-      : null,
-    sessions: (work?.sessions ?? []).map(decorate),
-    settings: work?.settings ?? { ...defaultSettings },
-  };
-}
-
-function load(): Database {
-  try {
-    const raw = localStorage.getItem(DATA_KEY);
-    if (!raw) return initialDb;
-    const parsed = JSON.parse(raw) as Database;
-    if (!Array.isArray(parsed.accounts) || !parsed.work) return initialDb;
-    return parsed;
-  } catch {
-    return initialDb;
+function frenchAuth(message: string) {
+  const lower = message.toLowerCase();
+  if (lower.includes("invalid login")) return "Adresse ou mot de passe incorrect.";
+  if (lower.includes("already registered") || lower.includes("already been registered")) {
+    return "Un compte existe déjà pour cette adresse.";
   }
+  if (lower.includes("password")) return "Le mot de passe doit contenir au moins 8 caractères.";
+  return message;
 }
 
-const serverSnapshot = project(initialDb);
-let db = initialDb;
+const emptySnapshot = (): Snapshot => ({
+  user: null,
+  sessions: [],
+  settings: { ...defaultSettings },
+  syncError: "",
+  recovery: false,
+});
+
+const serverSnapshot = emptySnapshot();
 let snapshot = serverSnapshot;
-if (typeof window !== "undefined") {
-  db = load();
-  snapshot = project(db);
-}
+let ready = false;
+let userId: string | null = null;
+let sessions: Session[] = [];
+let settings: Settings = { ...defaultSettings };
+let user: User | null = null;
+let syncError = "";
+let recovery = false;
+let started = false;
 
 const listeners = new Set<() => void>();
 
-function persist(next: Database) {
-  db = next;
-  snapshot = project(db);
-  localStorage.setItem(DATA_KEY, JSON.stringify(db));
+function emit() {
+  snapshot = {
+    user,
+    sessions: sessions.map(decorate),
+    settings,
+    syncError,
+    recovery,
+  };
   listeners.forEach((listener) => listener());
 }
 
-function setActive(email: string | null, remember: boolean) {
-  if (remember && email) {
-    sessionStorage.removeItem(ACTIVE_KEY);
-    return email;
-  }
-  if (email) sessionStorage.setItem(ACTIVE_KEY, email);
-  else sessionStorage.removeItem(ACTIVE_KEY);
-  return null;
+function resetLocal() {
+  userId = null;
+  user = null;
+  sessions = [];
+  settings = { ...defaultSettings };
+  syncError = "";
+  recovery = false;
 }
 
-function workOf(email: string) {
-  return db.work[email] ?? emptyWork();
-}
-
-function saveWork(email: string, work: Work, rememberedEmail = db.rememberedEmail) {
-  persist({ ...db, rememberedEmail, work: { ...db.work, [email]: work } });
+function fail(message: string) {
+  syncError = message;
+  emit();
 }
 
 function subscribe(listener: () => void) {
@@ -168,20 +148,110 @@ function subscribe(listener: () => void) {
   return () => listeners.delete(listener);
 }
 
-function subscribeReady() {
-  return () => {};
+function subscribeReady(listener: () => void) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+async function loadUser(authUser: AuthUser) {
+  userId = authUser.id;
+  const [profileResult, settingsResult, sessionsResult] = await Promise.all([
+    supabase.from("profiles").select("name, establishment, role").eq("id", authUser.id).maybeSingle(),
+    supabase.from("settings").select("model, temperature, local_mode, anonymize, connection, last_check").eq("user_id", authUser.id).maybeSingle(),
+    supabase.from("sessions").select("payload").eq("user_id", authUser.id).order("updated_at", { ascending: false }),
+  ]);
+  const problem = profileResult.error || settingsResult.error || sessionsResult.error;
+  if (problem) {
+    syncError = `Base Supabase : ${problem.message}`;
+  } else {
+    syncError = "";
+  }
+  const meta = authUser.user_metadata as { name?: string; establishment?: string };
+  user = {
+    email: authUser.email ?? "",
+    name: profileResult.data?.name || meta.name || "",
+    establishment: profileResult.data?.establishment || meta.establishment || "",
+    role: profileResult.data?.role || "Enseignant",
+  };
+  const row = settingsResult.data;
+  settings = row
+    ? {
+        provider: "Google AI Gemini",
+        model: row.model,
+        temperature: row.temperature,
+        localMode: row.local_mode,
+        anonymize: row.anonymize,
+        connection: row.connection === "connecte" ? "connecte" : "a_verifier",
+        lastCheck: row.last_check,
+      }
+    : { ...defaultSettings };
+  sessions = (sessionsResult.data ?? []).map((item) => item.payload as Session);
+  emit();
+}
+
+function start() {
+  if (started || typeof window === "undefined") return;
+  started = true;
+  if (!supabaseConfigured) {
+    syncError = "Les variables Supabase sont absentes de ce déploiement.";
+    ready = true;
+    emit();
+    return;
+  }
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (event === "PASSWORD_RECOVERY") recovery = true;
+    if (!session) {
+      resetLocal();
+      ready = true;
+      emit();
+      return;
+    }
+    void loadUser(session.user).then(() => {
+      ready = true;
+      emit();
+    });
+  });
+}
+
+async function persistSession(session: Session) {
+  if (!userId) return;
+  const { error } = await supabase.from("sessions").upsert({
+    id: session.id,
+    user_id: userId,
+    payload: session,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) fail(`Enregistrement de la session : ${error.message}`);
+}
+
+async function persistSettings(next: Settings) {
+  if (!userId) return;
+  const { error } = await supabase.from("settings").upsert({
+    user_id: userId,
+    model: next.model,
+    temperature: next.temperature,
+    local_mode: next.localMode,
+    anonymize: next.anonymize,
+    connection: next.connection,
+    last_check: next.lastCheck,
+  });
+  if (error) fail(`Enregistrement des réglages : ${error.message}`);
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const ready = useSyncExternalStore(subscribeReady, () => true, () => false);
+  const isReady = useSyncExternalStore(subscribeReady, () => ready, () => false);
   const state = useSyncExternalStore(subscribe, () => snapshot, () => serverSnapshot);
+
+  useEffect(() => {
+    start();
+  }, []);
 
   const api = useMemo<Store>(() => {
     return {
       ...state,
-      ready,
+      ready: isReady,
       register: async (input) => {
-        const email = normalizeEmail(input.email);
+        const email = input.email.trim().toLowerCase();
         const name = input.name.trim();
         const establishment = input.establishment.trim();
         if (!name || !establishment) return { ok: false, error: "Indiquez votre nom et l’établissement." };
@@ -189,77 +259,66 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return { ok: false, error: "Indiquez une adresse email valide." };
         }
         if (input.password.length < 8) return { ok: false, error: "Le mot de passe doit contenir au moins 8 caractères." };
-        if (input.recovery.trim().length < 6) {
-          return { ok: false, error: "Le code de récupération doit contenir au moins 6 caractères." };
-        }
-        if (db.accounts.some((account) => account.email === email)) {
-          return { ok: false, error: "Un compte existe déjà pour cette adresse." };
-        }
-        const password = await hashSecret(input.password);
-        const recovery = await hashSecret(input.recovery.trim());
-        const account: Account = {
+        setRemember(input.remember);
+        const { data, error } = await supabase.auth.signUp({
           email,
-          name,
-          establishment,
-          role: "Enseignant",
-          salt: password.salt,
-          hash: password.hash,
-          recoverySalt: recovery.salt,
-          recoveryHash: recovery.hash,
-        };
-        const rememberedEmail = setActive(email, input.remember);
-        persist({
-          accounts: [...db.accounts, account],
-          work: { ...db.work, [email]: emptyWork() },
-          rememberedEmail,
+          password: input.password,
+          options: {
+            data: { name, establishment },
+            emailRedirectTo: window.location.origin,
+          },
         });
+        if (error) return { ok: false, error: frenchAuth(error.message) };
+        if (!data.session || !data.user) {
+          return { ok: true, info: "Confirmez l’adresse reçue par email, puis connectez-vous." };
+        }
+        await loadUser(data.user);
+        ready = true;
+        emit();
         return { ok: true };
       },
       login: async (emailValue, password, remember) => {
-        const email = normalizeEmail(emailValue);
-        const account = db.accounts.find((item) => item.email === email);
-        if (!account || !(await verifySecret(password, account.salt, account.hash))) {
-          return { ok: false, error: "Adresse ou mot de passe incorrect." };
-        }
-        const rememberedEmail = setActive(email, remember);
-        persist({ ...db, rememberedEmail });
+        setRemember(remember);
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: emailValue.trim().toLowerCase(),
+          password,
+        });
+        if (error || !data.user) return { ok: false, error: frenchAuth(error?.message || "Connexion impossible.") };
+        await loadUser(data.user);
+        ready = true;
+        emit();
         return { ok: true };
       },
-      resetPassword: async (emailValue, recovery, password) => {
-        const email = normalizeEmail(emailValue);
-        const account = db.accounts.find((item) => item.email === email);
-        if (!account) return { ok: false, error: "Aucun compte pour cette adresse." };
-        if (!(await verifySecret(recovery.trim(), account.recoverySalt, account.recoveryHash))) {
-          return { ok: false, error: "Code de récupération incorrect." };
-        }
+      resetPassword: async (emailValue) => {
+        const email = emailValue.trim().toLowerCase();
+        if (!email.includes("@")) return { ok: false, error: "Indiquez une adresse email valide." };
+        const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+        if (error) return { ok: false, error: frenchAuth(error.message) };
+        return { ok: true, info: "Si un compte existe, un lien de réinitialisation vient d’être envoyé." };
+      },
+      updatePassword: async (password) => {
         if (password.length < 8) return { ok: false, error: "Le mot de passe doit contenir au moins 8 caractères." };
-        const next = await hashSecret(password);
-        persist({
-          ...db,
-          accounts: db.accounts.map((item) =>
-            item.email === email ? { ...item, salt: next.salt, hash: next.hash } : item,
-          ),
-        });
-        return { ok: true };
+        const { error } = await supabase.auth.updateUser({ password });
+        if (error) return { ok: false, error: frenchAuth(error.message) };
+        recovery = false;
+        emit();
+        return { ok: true, info: "Mot de passe mis à jour." };
       },
       logout: () => {
-        setActive(null, false);
-        persist({ ...db, rememberedEmail: null });
+        void supabase.auth.signOut();
       },
       updateSettings: (patch) => {
-        const email = state.user?.email;
-        if (!email) return;
-        const work = workOf(email);
-        saveWork(email, { ...work, settings: { ...work.settings, ...patch } });
+        settings = { ...settings, ...patch };
+        emit();
+        void persistSettings(settings);
       },
       createSession: (input) => {
-        const email = activeEmail(db);
-        if (!email) return "";
+        if (!userId) return "";
         const parsedDate = new Date(input.date);
         const date = Number.isNaN(parsedDate.getTime())
           ? input.date
           : parsedDate.toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
-        const id = `session-${crypto.randomUUID()}`;
+        const id = crypto.randomUUID();
         const copies: Copy[] = input.copies.map((copy, index) => ({
           id: copy.id,
           code: `Copie ${String(index + 1).padStart(2, "0")}`,
@@ -278,7 +337,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           analysisSeconds: null,
           error: "",
         }));
-        const session: Session = decorate({
+        const session = decorate({
           id,
           title: input.title.trim(),
           subject: input.subject.trim(),
@@ -302,58 +361,49 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           copies,
           chat: [
             {
-              id: `chat-${crypto.randomUUID()}`,
+              id: crypto.randomUUID(),
               role: "ai",
               text: input.supportText.trim()
                 ? `J’ai découpé « ${input.supportName} » en ${input.questions.length} question${input.questions.length > 1 ? "s" : ""}. Vérifiez le texte attendu et les points avant de lancer les ${copies.length} copies.`
                 : `« ${input.supportName} » ne contient pas de texte. Rédigez le barème dans le formulaire avant de lancer les ${copies.length} copies.`,
             },
           ],
-          journal: [{ id: `j-${crypto.randomUUID()}`, text: `Session créée avec ${copies.length} fichier${copies.length > 1 ? "s" : ""}.` }],
+          journal: [{ id: crypto.randomUUID(), text: `Session créée avec ${copies.length} fichier${copies.length > 1 ? "s" : ""}.` }],
         });
-        const work = workOf(email);
-        saveWork(email, { ...work, sessions: [session, ...work.sessions] });
+        sessions = [session, ...sessions];
+        emit();
+        void persistSession(session);
         return id;
       },
       patchSession: (id, recipe) => {
-        const email = activeEmail(db);
-        if (!email) return;
-        const work = workOf(email);
-        saveWork(email, {
-          ...work,
-          sessions: work.sessions.map((session) => (session.id === id ? decorate(recipe(session)) : session)),
-        });
+        sessions = sessions.map((session) => (session.id === id ? decorate(recipe(session)) : session));
+        emit();
+        const next = sessions.find((session) => session.id === id);
+        if (next) void persistSession(next);
       },
       deleteSession: (id) => {
-        const email = activeEmail(db);
-        if (!email) return;
-        const work = workOf(email);
-        const session = work.sessions.find((item) => item.id === id);
+        const session = sessions.find((item) => item.id === id);
         if (session) {
           void deleteFile(session.supportFileId);
           session.copies.forEach((copy) => void deleteFile(copy.id));
         }
-        saveWork(email, { ...work, sessions: work.sessions.filter((item) => item.id !== id) });
+        sessions = sessions.filter((item) => item.id !== id);
+        emit();
+        void supabase.from("sessions").delete().eq("id", id).then(({ error }) => {
+          if (error) fail(`Suppression : ${error.message}`);
+        });
       },
       eraseAccount: async () => {
-        const email = activeEmail(db);
-        if (!email) return;
-        const work = workOf(email);
         await Promise.all(
-          work.sessions.flatMap((session) => [deleteFile(session.supportFileId), ...session.copies.map((copy) => deleteFile(copy.id))]),
+          sessions.flatMap((session) => [deleteFile(session.supportFileId), ...session.copies.map((copy) => deleteFile(copy.id))]),
         );
-        setActive(null, false);
-        const workNext = { ...db.work };
-        delete workNext[email];
-        persist({
-          accounts: db.accounts.filter((account) => account.email !== email),
-          work: workNext,
-          rememberedEmail: null,
-        });
+        const { error } = await supabase.rpc("delete_own_account");
+        if (error) fail(`Suppression du compte : ${error.message}`);
+        await supabase.auth.signOut();
       },
       readSession: (id) => snapshot.sessions.find((session) => session.id === id),
     };
-  }, [ready, state]);
+  }, [isReady, state]);
 
   return <StoreContext.Provider value={api}>{children}</StoreContext.Provider>;
 }

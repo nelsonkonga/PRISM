@@ -1,46 +1,31 @@
-function openDb() {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open("prism-files", 1);
-    request.onupgradeneeded = () => {
-      if (!request.result.objectStoreNames.contains("files")) {
-        request.result.createObjectStore("files");
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
+import { supabase } from "@/lib/supabase";
+
+const bucket = "prism";
+
+async function pathFor(id: string) {
+  const { data } = await supabase.auth.getSession();
+  const userId = data.session?.user.id;
+  if (!userId) throw new Error("Connectez-vous avant de déposer un fichier.");
+  return `${userId}/${id}`;
 }
 
 export async function putFile(id: string, blob: Blob) {
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction("files", "readwrite");
-    tx.objectStore("files").put(blob, id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+  const path = await pathFor(id);
+  const { error } = await supabase.storage.from(bucket).upload(path, blob, {
+    upsert: true,
+    contentType: blob.type || "application/octet-stream",
   });
-  db.close();
+  if (error) throw new Error(error.message);
 }
 
 export async function getFile(id: string) {
-  const db = await openDb();
-  const blob = await new Promise<Blob | null>((resolve, reject) => {
-    const tx = db.transaction("files", "readonly");
-    const request = tx.objectStore("files").get(id);
-    request.onsuccess = () => resolve((request.result as Blob | undefined) ?? null);
-    request.onerror = () => reject(request.error);
-  });
-  db.close();
-  return blob;
+  const path = await pathFor(id);
+  const { data, error } = await supabase.storage.from(bucket).download(path);
+  if (error) return null;
+  return data;
 }
 
 export async function deleteFile(id: string) {
-  const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction("files", "readwrite");
-    tx.objectStore("files").delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-  db.close();
+  const path = await pathFor(id);
+  await supabase.storage.from(bucket).remove([path]);
 }

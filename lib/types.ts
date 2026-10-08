@@ -85,7 +85,6 @@ export type Session = {
 export type Settings = {
   provider: string;
   connection: "connecte" | "a_verifier";
-  apiKey: string;
   lastCheck: string;
   model: string;
   temperature: string;

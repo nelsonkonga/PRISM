@@ -1,15 +1,39 @@
+import { createClient } from "@supabase/supabase-js";
+
+async function caller(request: Request) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+  const header = request.headers.get("authorization");
+  if (!url || !anon || !header?.startsWith("Bearer ")) return null;
+  const supabase = createClient(url, anon, { global: { headers: { Authorization: header } } });
+  const { data } = await supabase.auth.getUser();
+  return data.user;
+}
+
+function serverKey() {
+  const apiKey = process.env.GEMINI_API_KEY?.trim() ?? "";
+  return apiKey.length >= 10 ? apiKey : "";
+}
+
+export async function GET(request: Request) {
+  const user = await caller(request);
+  if (!user) return Response.json({ error: "Session absente." }, { status: 401 });
+  return Response.json({ configured: Boolean(serverKey()) });
+}
+
 export async function POST(request: Request) {
+  const user = await caller(request);
+  if (!user) return Response.json({ error: "Session absente." }, { status: 401 });
+  const apiKey = serverKey();
+  if (!apiKey) {
+    return Response.json({ error: "GEMINI_API_KEY est absente du serveur." }, { status: 500 });
+  }
   const body = (await request.json()) as {
     action?: string;
-    apiKey?: string;
     model?: string;
     temperature?: number;
     prompt?: string;
   };
-  const apiKey = body.apiKey?.trim() ?? "";
-  if (apiKey.length < 10 || apiKey.length > 256) {
-    return Response.json({ error: "Clé API invalide." }, { status: 400 });
-  }
   if (body.action === "test") {
     const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=20", {
       headers: { "x-goog-api-key": apiKey },
