@@ -2,46 +2,104 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
-import { AlertTriangle, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { use, useState } from "react";
+import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { getFile } from "@/lib/blobs";
+import { downloadBlob } from "@/lib/export";
+import { copyStatusLabel } from "@/lib/labels";
 import { useStore } from "@/lib/store";
-import { cn } from "cn";
+import type { Copy, Criterion, Session } from "@/lib/types";
+
+const previews = new Map<string, Promise<string>>();
+
+function previewOf(id: string) {
+  const existing = previews.get(id);
+  if (existing) return existing;
+  const pending = getFile(id)
+    .then((blob) => (blob ? URL.createObjectURL(blob) : ""))
+    .catch(() => "");
+  previews.set(id, pending);
+  return pending;
+}
 
 export function CopyDetail() {
   const params = useParams<{ id: string; copyId: string }>();
-  const router = useRouter();
-  const { sessions, patchSession } = useStore();
+  const { sessions } = useStore();
+  const [notice, setNotice] = useState<{ copyId: string; text: string } | null>(null);
   const session = sessions.find((item) => item.id === params.id);
   const index = session?.copies.findIndex((copy) => copy.id === params.copyId) ?? -1;
   const copy = index >= 0 ? session?.copies[index] : undefined;
-  const [saved, setSaved] = useState("");
+  if (!session || !copy) return <p>Cette copie n’est pas dans la session.</p>;
+  const saved = notice?.copyId === copy.id ? notice.text : "";
+  return (
+    <Editor
+      key={`${copy.id}:${copy.status}:${copy.score}:${copy.detail}`}
+      session={session}
+      copy={copy}
+      index={index}
+      saved={saved}
+      onSaved={(text) => setNotice({ copyId: copy.id, text })}
+    />
+  );
+}
 
-  if (!session || !copy) {
-    return <p>Cette copie n’est pas dans la session.</p>;
-  }
-
+function Editor({
+  session,
+  copy,
+  index,
+  saved,
+  onSaved,
+}: {
+  session: Session;
+  copy: Copy;
+  index: number;
+  saved: string;
+  onSaved: (text: string) => void;
+}) {
+  const router = useRouter();
+  const { patchSession } = useStore();
+  const preview = use(previewOf(copy.id));
+  const [student, setStudent] = useState(copy.student);
+  const [criteria, setCriteria] = useState<Criterion[]>(copy.criteria);
+  const [appreciation, setAppreciation] = useState(copy.appreciation);
+  const [advice, setAdvice] = useState<string[]>(copy.advice);
+  const [manualScore, setManualScore] = useState(copy.score === null ? "" : String(copy.score));
   const previous = index > 0 ? session.copies[index - 1] : null;
   const next = index < session.copies.length - 1 ? session.copies[index + 1] : null;
+  const max = criteria.length ? criteria.reduce((sum, item) => sum + item.max, 0) : copy.max;
+  const score = criteria.length ? Math.round(criteria.reduce((sum, item) => sum + item.awarded, 0) * 2) / 2 : Number(manualScore);
+  const image = copy.mime.startsWith("image/");
 
-  function go(id: string) {
-    router.push(`/sessions/${session!.id}/copies/${id}`);
-  }
-
-  function validate() {
-    patchSession(session!.id, (current) => {
-      const copies = current.copies.map((item) =>
-        item.id === copy!.id
-          ? { ...item, status: item.score !== null && item.score >= 16 ? "haute" as const : "normale" as const }
+  function save() {
+    if (!criteria.length && (manualScore === "" || Number.isNaN(score))) {
+      onSaved("Indiquez une note.");
+      return;
+    }
+    patchSession(session.id, (current) => ({
+      ...current,
+      copies: current.copies.map((item) =>
+        item.id === copy.id
+          ? {
+              ...item,
+              student: student.trim() || item.student,
+              criteria,
+              appreciation,
+              advice: advice.map((line) => line.trim()).filter(Boolean),
+              score,
+              max,
+              status: "corrigee" as const,
+              source: "manuel" as const,
+              error: "",
+              detail: "Note saisie par l’enseignant",
+            }
           : item,
-      );
-      return {
-        ...current,
-        copies,
-        copiesDone: copies.filter((item) => item.score !== null && item.status !== "en_cours" && item.status !== "attente" && item.status !== "erreur").length,
-      };
-    });
-    setSaved("Copie validée. La note reste modifiable.");
+      ),
+      journal: [{ id: `j-${crypto.randomUUID()}`, text: `${student || copy.student} : note saisie ${score}/${max}.` }, ...current.journal],
+    }));
+    onSaved("Note enregistrée.");
   }
 
   return (
@@ -51,155 +109,91 @@ export function CopyDetail() {
           <ChevronLeft className="size-4" />
           Toutes les copies
         </Link>
-        <span className="hidden h-4 w-px bg-border sm:block" />
-        <h1 className="text-lg font-semibold">
-          Contrôle commun n<sup className="text-[0.65em]">e</sup> de maths
-        </h1>
-        <span className="inline-flex w-fit items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-800">
-          <span className="size-1.5 rounded-full bg-emerald-500" />
-          {copy.status === "erreur" ? "Bloquée" : copy.status === "attente" ? "En attente" : "Corrigée"}
-        </span>
-        <p className="text-sm text-muted-foreground sm:ml-auto">
-          {copy.code} · {copy.student}
-          {copy.score !== null ? ` · ${copy.score}/20` : ""}
-        </p>
+        <h1 className="text-lg font-semibold">{session.title}</h1>
+        <span className="text-sm text-muted-foreground">{copyStatusLabel[copy.status]}</span>
+        <p className="text-sm text-muted-foreground sm:ml-auto">{copy.fileName}{copy.score !== null ? ` · ${copy.score}/${copy.max}` : ""}</p>
       </div>
-
       <div className="grid gap-4 lg:grid-cols-[1.35fr_0.9fr]">
-        <section className="flex min-h-[640px] flex-col rounded-xl bg-white ring-1 ring-[#d5e0ee]">
+        <section className="flex min-h-[480px] flex-col rounded-xl bg-white ring-1 ring-[#d5e0ee]">
           <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <h2 className="font-semibold">Copie de l’élève</h2>
-            <p className="text-xs text-muted-foreground">{session.title}</p>
+            <h2 className="font-semibold">Fichier déposé</h2>
+            <button type="button" className="text-sm font-semibold text-[#1e50a0]" onClick={() => { void getFile(copy.id).then((blob) => { if (blob) downloadBlob(copy.fileName, blob); }); }}>
+              Télécharger
+            </button>
           </div>
-          <div className="flex-1 bg-[linear-gradient(180deg,#f7fafc,#eef3f8)] p-4 sm:p-6">
-            {copy.blocks ? (
-              <div className="space-y-4 rounded-lg bg-white p-5 shadow-sm">
-                {copy.blocks.map((block) => (
-                  <div key={block.title}>
-                    <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-                      {block.title}
-                    </p>
-                    <div className="mt-2 space-y-1 font-serif text-[15px] leading-7">
-                      {block.lines.map((line) => (
-                        <p key={line.text} className="flex items-start justify-between gap-3">
-                          <span>{line.text}</span>
-                          {line.mark ? (
-                            <span className="mt-1 shrink-0 rounded bg-[#e7eef8] px-1.5 py-0.5 font-sans text-[11px] text-[#1e50a0]">
-                              {line.mark}
-                            </span>
-                          ) : null}
-                        </p>
-                      ))}
-                    </div>
-                    {block.note ? (
-                      <p className="mt-2 flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-                        <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-                        {block.note}
-                      </p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
+          <div className="flex-1 bg-[#f7fafc] p-4 sm:p-6">
+            {image && preview ? (
+              // The address is a local blob URL of the file the teacher uploaded.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={preview} alt={copy.fileName} className="mx-auto max-h-[720px] rounded-lg bg-white shadow-sm" />
             ) : (
-              <div className="grid h-full min-h-64 place-items-center rounded-lg bg-white p-6 text-center text-sm text-muted-foreground shadow-sm">
-                {copy.status === "erreur"
-                  ? "Lecture bloquée. Le scan est tronqué : relancez l’OCR depuis la file, ou remplacez le fichier."
-                  : copy.status === "attente"
-                    ? "Cette copie est encore dans la file. Le détail apparaîtra dès que l’analyse sera terminée."
-                    : copy.appreciation || "Analyse enregistrée."}
-              </div>
+              <pre className="min-h-64 rounded-lg bg-white p-5 text-sm whitespace-pre-wrap shadow-sm">{copy.text || copy.error || "Aucun texte extrait. Saisissez la note à partir du fichier."}</pre>
             )}
           </div>
           <div className="flex items-center justify-between border-t border-border px-4 py-3">
-            <Button variant="ghost" disabled={!previous} onClick={() => previous && go(previous.id)}>
+            <Button variant="ghost" disabled={!previous} onClick={() => previous && router.push(`/sessions/${session.id}/copies/${previous.id}`)}>
               <ChevronLeft />
               Copie précédente
             </Button>
-            <span className="text-sm text-muted-foreground">
-              {index + 1} / {session.copies.length}
-            </span>
-            <Button variant="ghost" disabled={!next} onClick={() => next && go(next.id)}>
+            <span className="text-sm text-muted-foreground">{index + 1} / {session.copies.length}</span>
+            <Button variant="ghost" disabled={!next} onClick={() => next && router.push(`/sessions/${session.id}/copies/${next.id}`)}>
               Copie suivante
               <ChevronRight />
             </Button>
           </div>
         </section>
-
-        <section className="rounded-xl bg-white ring-1 ring-[#d5e0ee]">
-          <div className="border-b border-border px-5 py-4">
-            <p className="flex items-center gap-2 text-sm font-medium">
-              <Sparkles className="size-4 text-[#1e50a0]" />
-              Retour de correction
-            </p>
-            <p className="mt-3 text-4xl font-semibold">
-              {copy.score === null ? "—" : copy.score}
-              <span className="text-xl font-normal text-muted-foreground"> / 20</span>
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Correction automatique · Rigueur standard ({session.rigor}/10)
-              {copy.analysisSeconds ? ` · Temps d'analyse : ${copy.analysisSeconds.toLocaleString("fr-FR")}s` : ""}
-            </p>
+        <section className="space-y-4 rounded-xl bg-white p-5 ring-1 ring-[#d5e0ee]">
+          <div>
+            <p className="text-sm text-muted-foreground">Élève, repris du nom de fichier</p>
+            <Input className="mt-1 h-11" value={student} onChange={(event) => setStudent(event.target.value)} />
           </div>
-          <div className="space-y-3 px-5 py-4">
-            {(copy.criteria ?? []).map((item) => (
-              <article key={item.id} className="rounded-lg border border-border p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-medium">{item.title}</h3>
-                  <span
-                    className={cn(
-                      "rounded-full px-2 py-0.5 text-xs font-medium",
-                      item.tone === "ok" && "bg-emerald-50 text-emerald-800",
-                      item.tone === "warn" && "bg-amber-50 text-amber-900",
-                      item.tone === "partial" && "bg-sky-50 text-sky-900",
-                    )}
-                  >
-                    {item.score}
-                  </span>
-                </div>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">{item.comment}</p>
-              </article>
-            ))}
-            {!copy.criteria?.length ? (
-              <p className="text-sm text-muted-foreground">
-                Pas encore de critères détaillés pour cette copie.
-              </p>
-            ) : null}
-          </div>
-          {copy.appreciation ? (
-            <div className="mx-5 mb-5 rounded-lg bg-[#f3f6fb] p-4">
-              <p className="text-sm leading-6">{copy.appreciation}</p>
-              {copy.advice?.length ? (
-                <>
-                  <p className="mt-3 text-xs font-semibold tracking-wide">CONSEILS DE RÉVISION :</p>
-                  <ul className="mt-2 list-disc space-y-1 pl-4 text-sm">
-                    {copy.advice.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </>
-              ) : null}
+          <p className="text-4xl font-semibold">{Number.isFinite(score) ? score : "—"}<span className="text-xl font-normal text-muted-foreground"> / {max || copy.max}</span></p>
+          <p className="text-sm text-muted-foreground">{copy.detail}</p>
+          {copy.error ? <p className="text-sm text-destructive">{copy.error}</p> : null}
+          {criteria.length === 0 ? (
+            <label className="block text-sm">
+              Note
+              <Input className="mt-1 h-11" type="number" min={0} step={0.5} value={manualScore} onChange={(event) => setManualScore(event.target.value)} />
+            </label>
+          ) : (
+            <div className="space-y-3">
+              {criteria.map((item) => (
+                <article key={item.id} className="rounded-lg border border-border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-medium">{item.title}</h3>
+                    <Input className="h-9 w-24" type="number" min={0} max={item.max} step={0.5} value={item.awarded} onChange={(event) => setCriteria((current) => current.map((line) => line.id === item.id ? { ...line, awarded: Math.min(item.max, Number(event.target.value) || 0) } : line))} />
+                  </div>
+                  <Textarea className="mt-2" value={item.comment} onChange={(event) => setCriteria((current) => current.map((line) => line.id === item.id ? { ...line, comment: event.target.value } : line))} />
+                </article>
+              ))}
             </div>
-          ) : null}
-          <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
-            <Button
-              variant="outline"
-              onClick={() =>
-                patchSession(session.id, (current) => ({
-                  ...current,
-                  copies: current.copies.map((item) =>
-                    item.id === copy.id && item.score !== null
-                      ? { ...item, score: Math.max(0, item.score - 1) }
-                      : item,
-                  ),
-                }))
-              }
-              disabled={copy.score === null}
-            >
-              Ajuster −1
+          )}
+          <label className="block text-sm">
+            Appréciation
+            <Textarea className="mt-1" value={appreciation} onChange={(event) => setAppreciation(event.target.value)} />
+          </label>
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Conseils</p>
+            {advice.map((line, lineIndex) => (
+              <div key={`${lineIndex}-${line.slice(0, 8)}`} className="flex gap-2">
+                <Input value={line} onChange={(event) => setAdvice((current) => current.map((item, itemIndex) => itemIndex === lineIndex ? event.target.value : item))} />
+                <button type="button" aria-label="Retirer le conseil" onClick={() => setAdvice((current) => current.filter((_, itemIndex) => itemIndex !== lineIndex))}>
+                  <Trash2 className="size-4 text-muted-foreground" />
+                </button>
+              </div>
+            ))}
+            <Button variant="outline" size="sm" onClick={() => setAdvice((current) => [...current, ""])}>
+              <Plus />
+              Conseil
             </Button>
-            <Button onClick={validate}>Valider la copie</Button>
           </div>
-          {saved ? <p className="px-5 pb-4 text-sm text-emerald-700">{saved}</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={save}>Enregistrer la note</Button>
+            <Button variant="outline" onClick={() => patchSession(session.id, (current) => ({ ...current, autoGrade: true, copies: current.copies.map((item) => item.id === copy.id ? { ...item, status: "attente", detail: "Replacée dans la file", error: "" } : item) }))}>
+              Relancer l’analyse
+            </Button>
+          </div>
+          {saved ? <p className="text-sm text-emerald-700">{saved}</p> : null}
         </section>
       </div>
     </div>

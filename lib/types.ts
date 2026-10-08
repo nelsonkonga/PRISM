@@ -1,44 +1,40 @@
 export type SessionStatus = "terminee" | "en_cours" | "preparation";
 
-export type CopyStatus = "en_cours" | "haute" | "normale" | "attente" | "erreur";
+export type CopyStatus = "en_cours" | "corrigee" | "attente" | "erreur";
+
+export type GradeSource = "gemini" | "local" | "manuel";
 
 export type Criterion = {
   id: string;
   title: string;
   comment: string;
-  score: string;
-  tone: "ok" | "warn" | "partial";
-};
-
-export type WorkLine = {
-  text: string;
-  mark?: string;
-};
-
-export type WorkBlock = {
-  title: string;
-  lines: WorkLine[];
-  note?: string;
+  awarded: number;
+  max: number;
 };
 
 export type Copy = {
   id: string;
   code: string;
   student: string;
+  fileName: string;
+  mime: string;
+  text: string;
   status: CopyStatus;
   score: number | null;
   max: number;
-  detail?: string;
-  blocks?: WorkBlock[];
-  criteria?: Criterion[];
-  appreciation?: string;
-  advice?: string[];
-  analysisSeconds?: number;
+  detail: string;
+  source: GradeSource | null;
+  criteria: Criterion[];
+  appreciation: string;
+  advice: string[];
+  analysisSeconds: number | null;
+  error: string;
 };
 
 export type RubricRow = {
+  id: string;
   label: string;
-  points: string;
+  points: number;
 };
 
 export type Question = {
@@ -47,13 +43,16 @@ export type Question = {
   points: number;
   expected: string;
   breakdown: RubricRow[];
-  updatedByAi?: boolean;
-  aiNote?: string;
 };
 
 export type ChatMessage = {
   id: string;
   role: "ai" | "user";
+  text: string;
+};
+
+export type JournalEntry = {
+  id: string;
   text: string;
 };
 
@@ -64,16 +63,23 @@ export type Session = {
   className: string;
   status: SessionStatus;
   date: string;
+  duration: string;
   copiesDone: number;
   copiesTotal: number;
   average: number | null;
   mode: "strict" | "equivalent";
   rigor: number;
   validated: boolean;
+  autoGrade: boolean;
   summary: string;
+  supportName: string;
+  supportText: string;
+  supportFileId: string;
+  supportMime: string;
   questions: Question[];
   copies: Copy[];
   chat: ChatMessage[];
+  journal: JournalEntry[];
 };
 
 export type Settings = {
@@ -81,8 +87,6 @@ export type Settings = {
   connection: "connecte" | "a_verifier";
   apiKey: string;
   lastCheck: string;
-  fallbackProvider: string;
-  fallbackStatus: string;
   model: string;
   temperature: string;
   localMode: boolean;
@@ -96,15 +100,21 @@ export type User = {
   establishment: string;
 };
 
-export type Draft = {
-  title: string;
-  subject: string;
-  className: string;
-  date: string;
-  duration: string;
-  coefficient: string;
-  supportName: string;
-  mode: "strict" | "equivalent";
-  rigor: number;
-  copyCount: number;
+export type Account = {
+  email: string;
+  name: string;
+  role: string;
+  establishment: string;
+  salt: string;
+  hash: string;
+  recoverySalt: string;
+  recoveryHash: string;
+};
+
+export type UploadedCopy = {
+  id: string;
+  fileName: string;
+  mime: string;
+  text: string;
+  student: string;
 };

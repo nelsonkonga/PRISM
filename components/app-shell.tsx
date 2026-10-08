@@ -31,6 +31,15 @@ const links = [
   { href: "/aide", label: "Aide" },
 ];
 
+function initials(name: string) {
+  const letters = name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "");
+  return letters.join("") || "PR";
+}
+
 function isActive(pathname: string, historique: boolean, href: string) {
   if (href === "/sessions?vue=historique") {
     return pathname === "/sessions" && historique;
@@ -88,10 +97,10 @@ function Shell({ children }: { children: ReactNode }) {
   }, [ready, user, router]);
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-screen min-w-0 flex-col">
       {authed && user ? (
         <header className="sticky top-0 z-40 border-b border-border bg-white/95 backdrop-blur">
-          <div className="mx-auto flex h-16 w-full max-w-[1280px] items-center gap-4 px-4 sm:px-8">
+          <div className="mx-auto flex h-16 w-full min-w-0 max-w-[1280px] items-center gap-4 px-4 sm:px-8">
             <Link href="/tableau-de-bord" className="shrink-0" aria-label="PRISM, tableau de bord">
               <Logo />
             </Link>
@@ -109,7 +118,7 @@ function Shell({ children }: { children: ReactNode }) {
               <DropdownMenu>
                 <DropdownMenuTrigger className="flex items-center gap-2 rounded-lg py-1 pr-1 pl-1 hover:bg-muted">
                   <span className="grid size-8 place-items-center rounded-full bg-[#1e50a0] text-xs font-semibold text-white">
-                    CM
+                    {initials(user.name)}
                   </span>
                   <span className="hidden text-left leading-tight sm:block">
                     <span className="block text-sm font-medium">{user.name}</span>
@@ -150,14 +159,14 @@ function Shell({ children }: { children: ReactNode }) {
             </div>
           </div>
           {open ? (
-            <div className="border-t border-border bg-white px-4 py-3 lg:hidden">
+            <div className="fixed inset-x-0 top-16 bottom-0 z-30 overflow-auto border-t border-border bg-white px-4 py-4 lg:hidden">
               <Suspense fallback={null}>
                 <Navigation
                   className="flex flex-col gap-1"
                   onNavigate={() => setOpen(false)}
                 />
               </Suspense>
-              <Button className="mt-2" onClick={() => router.push("/sessions/nouvelle")}>
+              <Button className="mt-3 w-full" onClick={() => { setOpen(false); router.push("/sessions/nouvelle"); }}>
                 <Plus />
                 Nouvelle session
               </Button>
@@ -169,7 +178,7 @@ function Shell({ children }: { children: ReactNode }) {
       )}
       <main
         hidden={!authed}
-        className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-6 sm:px-8 sm:py-8"
+        className="mx-auto w-full min-w-0 max-w-[1280px] flex-1 px-4 py-6 sm:px-8 sm:py-8"
       >
         {children}
       </main>

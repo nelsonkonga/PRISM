@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { statusLabel } from "@/lib/data";
+import { sessionStatusLabel } from "@/lib/labels";
 import { useStore } from "@/lib/store";
 import type { SessionStatus } from "@/lib/types";
 import { cn } from "cn";
@@ -16,7 +16,7 @@ const filters: { id: "toutes" | SessionStatus; label: string }[] = [
 ];
 
 export function SessionList() {
-  const { sessions } = useStore();
+  const { sessions, deleteSession } = useStore();
   const params = useSearchParams();
   const historique = params.get("vue") === "historique";
   const [filter, setFilter] = useState<"toutes" | SessionStatus>(
@@ -72,7 +72,16 @@ export function SessionList() {
                   </p>
                 </div>
                 <p className="text-sm text-muted-foreground">{session.summary}</p>
-                <span className="text-sm font-medium">{statusLabel[session.status]}</span>
+                <span className="text-sm font-medium">{sessionStatusLabel[session.status]}</span>
+                <button
+                  type="button"
+                  className="text-sm text-muted-foreground"
+                  onClick={() => {
+                    if (window.confirm(`Supprimer « ${session.title} » ?`)) deleteSession(session.id);
+                  }}
+                >
+                  Supprimer
+                </button>
                 <Link
                   href={
                     session.status === "preparation" && !session.validated

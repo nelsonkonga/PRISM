@@ -1,10 +1,13 @@
 # PRISM
 
-Application de correction assistée pour un établissement. L’enseignant prépare une session, valide le barème avec l’assistant, puis relit chaque copie : note sur 20, critères et conseils de révision.
+Correction de copies pour un établissement. L’enseignant crée un compte dans son navigateur, dépose un corrigé et des copies, vérifie le barème extrait du document, puis lance la file.
 
-Les écrans reprennent le fichier Figma [PRISM](https://www.figma.com/design/AbFCJtnjqGwF5kh4P32KDy/PRISM) : connexion, tableau de bord, assistant de session, validation du corrigé, file de traitement, détail d’une copie, paramètres et aide. Le quota de lecture Figma du plan Starter a empêché d’exporter les rendus et le texte des calques simplement nommés « Text ». Les phrases présentes dans les noms de calques sont reprises telles quelles. Le reste du libellé suit la structure de ces écrans.
+Deux moteurs existent :
 
-Aucune clé ni aucun modèle externe n’est appelé. La session reste dans le navigateur.
+- **Comparaison locale** : la part des mots du corrigé retrouvée dans chaque copie, modulée par la rigueur. Aucune note n’est écrite si le fichier n’a pas de texte.
+- **Gemini** : appel réel à l’API Google AI, seulement si la comparaison locale est coupée et qu’une clé a été testée dans Paramètres.
+
+Les comptes, fichiers et notes restent dans le navigateur (stockage local et IndexedDB). Un export CSV télécharge le relevé de la session.
 
 ## Lancer
 
@@ -13,13 +16,11 @@ npm install
 npm run dev
 ```
 
-Ouvrir [http://localhost:3000](http://localhost:3000). Pour entrer, utiliser une adresse du type `claire.morel@etablissement.fr` et un mot de passe d’au moins 4 caractères.
+Ouvrir [http://localhost:3000](http://localhost:3000). Créez un compte : mot de passe d’au moins 8 caractères, et un code de récupération que vous choisissez.
 
 ## Parcours
 
-1. Tableau de bord : indicateurs, distribution des notes, sessions récentes.
-2. Nouvelle session : identité, épreuve, support, mode et rigueur, copies.
-3. Validation du corrigé : barème et assistant.
-4. Espace de session : file, corrigé, barème, statistiques, journal.
-5. Détail de copie : travail de l’élève et retour par critère.
-6. Paramètres : fournisseur, secours, modèle, anonymisation.
+1. Déposer un corrigé (PDF texte, `.txt`, ou image).
+2. Choisir le mode et la rigueur, puis ajouter les copies. Chaque fichier peut être retiré avant le lancement.
+3. Corriger le barème dans les champs, ou par une demande précise (« retire 1 pt sur Question 1 »).
+4. Lancer la file, relire chaque note, la modifier, puis exporter le CSV.
