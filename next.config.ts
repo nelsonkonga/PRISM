@@ -1,9 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // The dev server is opened at 127.0.0.1. Next only allows localhost by default,
-  // which blocks the HMR socket and leaves the page as static HTML.
-  allowedDevOrigins: ["127.0.0.1"],
+  // Next only allows localhost by default. Without these hosts it refuses the
+  // CSS, scripts and HMR socket, so the preview stays as an unstyled page.
+  allowedDevOrigins: ["127.0.0.1", "*.agent.cvm.dev"],
   cacheComponents: true,
   partialPrefetching: true,
   turbopack: {
