@@ -180,7 +180,7 @@ export function Validation() {
           Je confirme que le barème correspond à l’épreuve et peut s’appliquer à toutes les copies.
         </label>
         <div className="flex gap-2">
-          <Button variant="outline" render={<Link href="/sessions" />}>
+          <Button variant="outline" nativeButton={false} render={<Link href="/sessions" />}>
             Retour
           </Button>
           <Button onClick={launch}>Lancer le traitement</Button>
