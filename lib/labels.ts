@@ -17,7 +17,7 @@ export const defaultSettings = {
   provider: "Google AI Gemini",
   connection: "a_verifier" as const,
   lastCheck: "",
-  model: "gemini-2.5-flash",
+  model: "gemini-3.8-flash",
   temperature: "0.1",
   localMode: false,
   anonymize: true,

@@ -177,7 +177,7 @@ async function loadUser(authUser: AuthUser) {
   settings = row
     ? {
         provider: "Google AI Gemini",
-        model: row.model,
+        model: row.model === "gemini-2.5-flash" ? "gemini-3.8-flash" : row.model,
         temperature: row.temperature,
         localMode: row.local_mode,
         anonymize: row.anonymize,
@@ -187,6 +187,7 @@ async function loadUser(authUser: AuthUser) {
     : { ...defaultSettings };
   sessions = (sessionsResult.data ?? []).map((item) => item.payload as Session);
   emit();
+  if (row?.model === "gemini-2.5-flash") void persistSettings(settings);
 }
 
 function start() {

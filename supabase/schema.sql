@@ -10,7 +10,7 @@ create table if not exists public.profiles (
 
 create table if not exists public.settings (
   user_id uuid primary key references auth.users (id) on delete cascade,
-  model text not null default 'gemini-2.5-flash',
+  model text not null default 'gemini-3.8-flash',
   temperature text not null default '0.1',
   local_mode boolean not null default false,
   anonymize boolean not null default true,

@@ -23,7 +23,7 @@ export async function gradeOne(copy: Copy, session: Session, settings: Settings)
     const useGemini = !settings.localMode;
     const result = useGemini
       ? await gradeWithGemini({
-          model: settings.model.trim() || "gemini-2.5-flash",
+          model: settings.model.trim() === "gemini-2.5-flash" || !settings.model.trim() ? "gemini-3.8-flash" : settings.model.trim(),
           temperature: settings.temperature,
           questions: session.questions,
           studentText: sourceText,
